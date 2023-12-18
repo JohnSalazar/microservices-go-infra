@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-dpl
+  namespace: mymicroservices
+  labels:
+    app: customer-dpl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer
+  template:
+    metadata:
+      name: customer
+      labels:
+        app: customer
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: customer        
+        image: joaosalazar/customers
+        imagePullPolicy: Always
+        env:
+        - name: kubernetes
+          value: "true"
+        - name: PASSWORDPERMISSIONENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: certificate-permission-secret
+              key: PASSWORDPERMISSIONENDPOINT
+        - name: MONGO_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_USER
+        - name: MONGO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_PASSWORD
+        - name: MONGO_EXPORTER_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-exporter-secret
+              key: MONGO_EXPORTER_USER
+        - name: MONGO_EXPORTER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-exporter-secret
+              key: MONGO_EXPORTER_PASSWORD
+        - name: PROMETHEUS_PUSHGATEWAY
+          valueFrom:
+            configMapKeyRef:
+              name: prometheus-pushgateway-map
+              key: PROMETHEUS_PUSHGATEWAY
+        ports:
+          - containerPort: 5300
+        resources:
+            requests:
+              cpu: "0.125"
+              memory: 30Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-svc
+  namespace: mymicroservices
+  labels:
+    app: customer
+spec:
+  selector:
+    app: customer
+  ports:
+    - name: http-web
+      protocol: TCP
+      port: 5300
+      targetPort: 5300
+  type: ClusterIP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: customer-alerts
+  namespace: observability
+  labels:
+    release: kube-prom-stack
+    role: server-rules
+spec:
+  groups:
+  - name: customer.rules
+    rules:
+    - alert: customer_down
+      expr: absent(container_memory_usage_bytes{container="customer"})
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: Customer down
+        description: Customer container is down for more than 30 seconds.
+    - alert: customer_high_cpu
+      expr: sum(rate(container_cpu_usage_seconds_total{container="customer"}[1m])) / count(node_cpu_seconds_total{mode="system"}) * 100 > 10
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Customer high CPU usage
+        description: Customer CPU usage is {{ humanize $value}}%.
+    - alert: customer_high_memory
+      expr: sum(container_memory_usage_bytes{container="customer"}) > 1200000000
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Customer high memory usage
+        description: Customer memory consumption is at {{ humanize $value}}.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: customer-svc
+  namespace: observability
+  labels:
+    app: customer
+    release: kube-prom-stack
+spec:  
+  selector:
+    matchLabels:
+      app: customer      
+  endpoints:
+    - port: http-web
+      interval: 15s
+      path: /metrics
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+  namespaceSelector:                                                                                                                                                                                                                      
+    matchNames:                                                                                                                                                                                                                           
+    - mymicroservices

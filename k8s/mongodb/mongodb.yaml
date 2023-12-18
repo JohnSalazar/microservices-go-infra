@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongodb-secret
+  namespace: mymicroservices
+type: Opaque
+stringData:
+  MONGO_USER: mongo
+  MONGO_PASSWORD: mongo
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb-server-state
+  namespace: mymicroservices
+  labels:
+    app: mongodb-server-state
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-server
+  serviceName: "mongodb-server-svc"
+  template:
+    metadata:
+      name: mongodb-server
+      labels:
+        app: mongodb-server
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: mongodb-server
+        image: mongo
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_USER
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_PASSWORD
+        ports:
+          - containerPort: 27017
+        resources:
+            requests:
+              cpu: "0.2"
+              memory: 200Mi
+        volumeMounts:
+          - name: mongo-volume
+            mountPath: /data/db      
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-volume
+      namespace: mymicroservices
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-server-svc
+  namespace: mymicroservices
+  labels:
+    app: mongodb-server-svc
+spec:
+  selector:
+    app: mongodb-server
+  ports:
+    - protocol: TCP
+      port: 27017
+      targetPort: 27017
+  type: ClusterIP

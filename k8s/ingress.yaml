@@ -1,0 +1,59 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress
+  namespace: mymicroservices
+  annotations:
+    cert-manager.io/cluster-issuer: mymicroservices-issuer
+    nginx.ingress.kubernetes.io/use-regex: 'true'
+    acme.cert-manager.io/http01-edit-in-place: 'true'
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/secure-backends: 'true'
+    nginx.ingress.kubernetes.io/backend-protocol: 'HTTPS'
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+      - mymicroservices.com
+      secretName: mymicroservices-tls
+  rules:
+    - host: mymicroservices.com
+      http:
+        paths:
+          - path: /authentications(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: authentication-svc
+                port:
+                  number: 5100
+          - path: /carts(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: cart-svc
+                port:
+                  number: 5500
+          - path: /customers(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: customer-svc
+                port:
+                  number: 5300
+          - path: /orders(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: order-svc
+                port:
+                  number: 5600
+          - path: /products(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: product-svc
+                port:
+                  number: 5400

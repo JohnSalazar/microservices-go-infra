@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-nats
+  namespace: mymicroservices
+  annotations:
+    cert-manager.io/cluster-issuer: 'mymicroservices-issuer'
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+      - mymicroservices.com
+      secretName: mymicroservices-tls
+  rules:
+    - host: mymicroservices.com
+      http:
+        paths:
+          - path: /nats(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: nats-streaming-svc
+                port:
+                  number: 8222

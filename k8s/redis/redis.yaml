@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-server-dpl
+  namespace: mymicroservices
+  labels:
+    app: redis-server-dpl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+      role: master
+      tier: backend
+  template:
+    metadata:
+      name: redis
+      labels:
+        app: redis
+        role: master
+        tier: backend
+    spec:
+      containers:
+      - name: master
+        image: redislabs/redisearch:latest
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+            - name: certs-pv-storage
+              mountPath: /certs
+      volumes:
+        - name: certs-pv-storage
+          persistentVolumeClaim:
+            claimName: certs-pv-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-server-svc
+  namespace: mymicroservices
+  labels:
+    app: redis-server-svc
+    role: master
+    tier: backend
+spec:
+  selector:
+    app: redis
+    role: master
+    tier: backend
+  ports:
+  - protocol: TCP
+    port: 6379
+    targetPort: 6379

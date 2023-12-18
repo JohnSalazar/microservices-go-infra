@@ -1,0 +1,222 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentication-dpl
+  namespace: mymicroservices
+  labels:
+    app: authentication-dpl
+spec:
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: authentication
+  template:  
+    metadata:
+      name: authentication
+      labels:
+        app: authentication
+    spec:      
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: authentication        
+        image: joaosalazar/authentications
+        imagePullPolicy: Always
+        env:
+        - name: kubernetes
+          value: "true"
+        - name: HASHPERMISSIONENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: certificate-permission-secret
+              key: HASHPERMISSIONENDPOINT
+        - name: PASSWORDPERMISSIONENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: certificate-permission-secret
+              key: PASSWORDPERMISSIONENDPOINT        
+        - name: MONGO_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_USER
+        - name: MONGO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_PASSWORD
+        - name: MONGO_EXPORTER_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-exporter-secret
+              key: MONGO_EXPORTER_USER
+        - name: MONGO_EXPORTER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-exporter-secret
+              key: MONGO_EXPORTER_PASSWORD
+        - name: PROMETHEUS_PUSHGATEWAY
+          valueFrom:
+            configMapKeyRef:
+              name: prometheus-pushgateway-map
+              key: PROMETHEUS_PUSHGATEWAY
+        ports:
+          - containerPort: 5100            
+        resources:
+            requests:
+              cpu: "0.125"
+              memory: 30Mi
+        volumeMounts:
+            - name: certs-pv-storage
+              mountPath: /certs
+      volumes:
+        - name: certs-pv-storage
+          persistentVolumeClaim:
+            claimName: certs-pv-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authentication-svc
+  namespace: mymicroservices  
+  labels:
+    app: authentication
+spec:
+  selector:
+    app: authentication
+  ports:
+    - name: http-web
+      protocol: TCP      
+      port: 5100
+      targetPort: 5100
+  type: ClusterIP
+# ---
+# apiVersion: monitoring.coreos.com/v1
+# kind: Prometheus
+# metadata:
+#   name: prometheus
+#   namespace: observability
+# spec:
+#   serviceAccountName: prometheus-kube-prometheus-prometheus
+#   serviceMonitorSelector:
+#     matchLabels:
+#       release: kube-prom-stack
+#   resources:
+#     requests:
+#       memory: 400Mi
+#   ruleSelector:
+#     matchLabels:
+#       app: kube-prometheus-stack
+#       release: kube-prom-stack
+#       role: server-rules
+#   alerting:
+#     alertmanagers:
+#     - namespace: observability
+#       name: alertmanager-operated
+#       port: web
+#   storage:
+#     volumeClaimTemplate:
+#       spec:
+#         storageClassName: prometheus
+#         accessModes:
+#         - ReadWriteOnce
+#         resources:
+#           requests:
+#             storage: 10Gi
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: authentication-alerts
+  namespace: observability
+  labels:
+    release: kube-prom-stack
+    role: server-rules
+spec:
+  groups:
+  - name: authentication.rules
+    rules:
+    - alert: authentication_down
+      expr: absent(container_memory_usage_bytes{container="authentication"})
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: Authentication down
+        description: Authentication container is down for more than 30 seconds.
+    - alert: authentication_high_cpu
+      expr: sum(rate(container_cpu_usage_seconds_total{container="authentication"}[1m])) / count(node_cpu_seconds_total{mode="system"}) * 100 > 10
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Authentication high CPU usage
+        description: Authentication CPU usage is {{ humanize $value}}%.
+    - alert: authentication_high_memory
+      expr: sum(container_memory_usage_bytes{container="authentication"}) > 1200000000
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Authentication high memory usage
+        description: Authentication memory consumption is at {{ humanize $value}}.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: authentication-svc
+  namespace: observability
+  labels:
+    app: authentication
+    release: kube-prom-stack
+spec:  
+  selector:
+    matchLabels:
+      app: authentication      
+  endpoints:
+    - port: http-web
+      interval: 15s
+      path: /metrics
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+  namespaceSelector:                                                                                                                                                                                                                      
+    matchNames:                                                                                                                                                                                                                           
+    - mymicroservices
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: authentication-autoscaler
+  namespace: mymicroservices
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: authentication-dpl
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+  - type: Pods
+    pods:
+      metric:
+        name: packets-per-second
+      target:
+        type: AverageValue
+        averageValue: 1k
+  - type: Object
+    object:
+      metric:
+        name: requests-per-second
+      describedObject:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        name: main-route
+      target:
+        type: Value
+        value: 10k

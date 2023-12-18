@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-dpl
+  namespace: mymicroservices
+  labels:
+    app: payment-dpl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment
+  template:
+    metadata:
+      name: payment
+      labels:
+        app: payment
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: payment        
+        image: joaosalazar/payments
+        imagePullPolicy: Always
+        env:
+        - name: kubernetes
+          value: "true"
+        - name: PASSWORDPERMISSIONENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: certificate-permission-secret
+              key: PASSWORDPERMISSIONENDPOINT
+        - name: MONGO_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_USER
+        - name: MONGO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_PASSWORD
+        - name: MONGO_EXPORTER_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-exporter-secret
+              key: MONGO_EXPORTER_USER
+        - name: MONGO_EXPORTER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-exporter-secret
+              key: MONGO_EXPORTER_PASSWORD
+        - name: PROMETHEUS_PUSHGATEWAY
+          valueFrom:
+            configMapKeyRef:
+              name: prometheus-pushgateway-map
+              key: PROMETHEUS_PUSHGATEWAY
+        ports:
+          - containerPort: 5700
+        resources:
+            requests:
+              cpu: "0.125"
+              memory: 30Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-svc
+  namespace: mymicroservices
+  labels:
+    app: payment
+spec:
+  selector:
+    app: payment
+  ports:
+    - name: http-web
+      protocol: TCP
+      port: 5700
+      targetPort: 5700
+  type: ClusterIP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: payment-alerts
+  namespace: observability
+  labels:
+    release: kube-prom-stack
+    role: server-rules
+spec:
+  groups:
+  - name: payment.rules
+    rules:
+    - alert: payment_down
+      expr: absent(container_memory_usage_bytes{container="payment"})
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: Payment down
+        description: Payment container is down for more than 30 seconds.
+    - alert: payment_high_cpu
+      expr: sum(rate(container_cpu_usage_seconds_total{container="payment"}[1m])) / count(node_cpu_seconds_total{mode="system"}) * 100 > 10
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Payment high CPU usage
+        description: Payment CPU usage is {{ humanize $value}}%.
+    - alert: payment_high_memory
+      expr: sum(container_memory_usage_bytes{container="payment"}) > 1200000000
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Payment high memory usage
+        description: Payment memory consumption is at {{ humanize $value}}.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: payment-svc
+  namespace: observability
+  labels:
+    app: payment
+    release: kube-prom-stack
+spec:  
+  selector:
+    matchLabels:
+      app: payment      
+  endpoints:
+    - port: http-web
+      interval: 15s
+      path: /metrics
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+  namespaceSelector:                                                                                                                                                                                                                      
+    matchNames:                                                                                                                                                                                                                           
+    - mymicroservices

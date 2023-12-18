@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: consul-dpl
+ namespace: mymicroservices
+ labels:
+    app: consul-dpl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consul
+  template:
+    metadata:
+      name: consul
+      labels:
+        app: consul
+    spec:
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: consul
+          image: consul
+          ports:
+            - containerPort: 8500
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 10m
+            limits:
+              memory: 512Mi
+              cpu: 1000m          
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consul-svc
+  namespace: mymicroservices
+  labels:
+    app: consul-svc
+spec:
+  selector:
+    app: consul
+  ports:
+    - protocol: TCP
+      port: 8500
+      targetPort: 8500
+  type: ClusterIP

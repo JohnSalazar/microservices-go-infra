@@ -1,0 +1,29 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: mymicroservices-issuer
+  namespace: cert-manager
+spec:
+ acme:
+   server: https://acme-v02.api.letsencrypt.org/directory
+   email: oceano.dev@outlook.com
+   privateKeySecretRef:
+     name: mymicroservices-issuer
+   solvers:
+   - http01:
+       ingress:
+         class:  nginx
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mymicroservices-crt
+spec:
+  secretName: mymicroservices-tls
+  issuerRef:
+    kind: Issuer
+    name: mymicroservices-issuer-ref
+  commonName: "mymicroservices.com"
+  isCA: true
+  dnsNames:
+    - "mymicroservices.com"

@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-pushgateway-map
+  namespace: mymicroservices
+data:
+  PROMETHEUS_PUSHGATEWAY: "http://pushgateway-svc.observability.svc:9091/"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway-dpl
+  namespace: observability
+  labels:
+    app: pushgateway-dpl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pushgateway
+  template:
+    metadata:
+      name: pushgateway
+      labels:
+        app: pushgateway
+    spec:
+      containers:
+        - name: pushgateway
+          image: prom/pushgateway
+          ports:
+            - containerPort: 9091
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: 'pushgateway-svc'
+  namespace: observability
+  labels:
+    app: pushgateway-svc
+spec:
+  selector: 
+    app: pushgateway
+  ports:
+    - protocol: TCP
+      port: 9091
+      targetPort: 9091
+  type: ClusterIP

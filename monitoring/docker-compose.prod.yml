@@ -1,0 +1,592 @@
+version: '3.9'
+
+networks:
+  nats:
+    driver: bridge
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+  mongodb_data_container: {}
+  postgres_data_container: {}
+  redis_data: {}
+  certs_data: {}
+
+services:
+  consul-svc:
+    container_name: consul-svc
+    image: consul
+    restart: unless-stopped
+    expose:
+      - 8500
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  prometheus-svc:
+    container_name: prometheus-svc
+    image: prom/prometheus
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=200h'
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    # links:
+    #   - cadvisor:cadvisor
+    #   - alertmanager:alertmanager
+    depends_on:
+      - cadvisor-svc
+      - nodeexporter-svc
+      - nginxexporter-svc
+      - mongo-exporter-svc
+    restart: unless-stopped
+    expose:
+      - 9090
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  alertmanager-svc:
+    container_name: alertmanager-svc
+    image: prom/alertmanager
+    volumes:
+      - ./alertmanager:/etc/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+    restart: unless-stopped
+    expose:
+      - 9093
+    networks:
+      - nats
+    depends_on:
+      - prometheus-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  nodeexporter-svc:
+    container_name: nodeexporter-svc
+    image: prom/node-exporter
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+    expose:
+      - 9100
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  # containerexporter:
+  #   image: prom/container-exporter
+  #   container_name: containerexporter
+  #   volumes:
+  #     - /sys/fs/cgroup:/cgroup
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   restart: unless-stopped
+  #   expose:
+  #     - 9104
+  #   networks:
+  #     - nats
+  #   labels:
+  #     org.label-schema.group: "microservice"
+
+  cadvisor-svc:
+    container_name: cadvisor-svc
+    image: gcr.io/cadvisor/cadvisor
+    privileged: true
+    user: root    
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      # - /mnt/my-docker/version-pack-data/community/docker:/rootfs/var/lib/docker:ro
+      # - /cgroup:/cgroup:ro #doesn't work on MacOS only for Linux
+    restart: unless-stopped
+    expose:
+      - 8080
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  grafana-svc:
+    container_name: grafana-svc
+    image: grafana/grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_HTTP_PORT=3001
+      - GF_SERVER_DOMAIN=mymicroservices.com
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:/grafana
+    restart: unless-stopped
+    expose:
+      - 3001
+    networks:
+      - nats
+    depends_on:
+      - prometheus-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  pushgateway-svc:
+    container_name: pushgateway-svc
+    image: prom/pushgateway
+    restart: unless-stopped
+    expose:
+      - 9091
+    networks:
+      - nats
+    depends_on:
+      - prometheus-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  nginxexporter-svc:
+    container_name: nginxexporter-svc
+    image: nginx/nginx-prometheus-exporter
+    expose:
+      - 9113
+    restart: unless-stopped
+    environment:
+      SCRAPE_URI: https://nginx-svc/stub_status
+      SSL_VERIFY: 'false'
+    networks:
+      - nats
+    depends_on:
+      - nginx-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  # nginx:
+  #   container_name: nginx
+  #   build:
+  #     context: ./nginx
+  #     # dockerfile: Dockerfile
+  #     network: host
+  #     args:
+  #       - CERTBOT_EMAIL=contato@mymicroservices.com
+  #       - DOMAIN_LIST=centralcob.com.br
+  #   restart: unless-stopped
+  #   volumes:
+  #     # - ./nginx/nginx-selfsigned.crt:/etc/nginx/certs/nginx-selfsigned.crt
+  #     # - ./nginx/nginx-selfsigned.key:/etc/nginx/certs/nginx-selfsigned.key
+  #     - letsencrypt:/etc/letsencrypt
+  #   ports:
+  #     - 80:80
+  #     - 443:443
+  #   networks:
+  #     - nats
+  #   labels:
+  #     org.label-schema.group: "microservice"
+
+  nginx-svc:
+    container_name: nginx-svc
+    image: nginx
+    # build:
+    #   context: ./nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf
+      # - ./nginx/localhost.crt:/certs/localhost.crt
+      # - ./nginx/localhost.key:/certs/localhost.key
+      - certs_data:/certs
+    ports:
+      - 80:80
+      - 443:443
+    depends_on:
+      - authentication-svc
+      - cadvisor-svc
+      - cart-svc
+      - customer-svc
+      - email-svc
+      - mailhog-smtp-svc
+      - nats-streaming-svc
+      - order-svc
+      - payment-svc
+      - product-svc
+      - web-svc
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  # certbot:
+  #   image: certbot/certbot
+  #   container_name: certbot
+  #   # environment:
+  #   #   EMAIL: contact@mymicroservices.com
+  #   #   DOMAIN: mymicroservices.com
+  #   volumes:
+  #     - ./nginx/options-ssl-nginx.conf:/etc/letsencrypt/options-ssl-nginx.conf
+  #     - ./nginx/ssl-dhparams.pem:/etc/letsencrypt/ssl-dhparams.pem
+  #     - ./nginx/www:/var/www/certboot
+  #   command: certonly --webroot -w /var/www/certboot --force-renewal --rsa-key-size 4096 --email contact@mymicroservices.com -d mymicroservices.com --agree-tos --non-interactive
+  #   # depends_on:
+  #     # - nginx
+  #   networks:
+  #     - nats
+  #   labels:
+  #     org.label-schema.group: "microservice"
+
+  jaeger-collector-svc:
+    container_name: jaeger-collector-svc
+    restart: always
+    image: jaegertracing/all-in-one
+    expose:
+      - 16686
+      - 14268
+    environment:
+      QUERY_BASE_PATH: /jaeger
+    depends_on:
+      - nginx-svc
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  mongo-exporter-svc:
+    container_name: mongo-exporter-svc
+    image: bitnami/mongodb-exporter
+    expose:
+      - 9216
+    command: ['--discovering-mode', '--compatible-mode', '--mongodb.direct-connect=false']
+    environment:
+      MONGODB_URI: mongodb://${MONGO_EXPORTER_USER}:${MONGO_EXPORTER_PASSWORD}@mongodb-server-svc:27017/admin?ssl=false
+    networks:
+      - nats
+    restart: always
+    depends_on:
+      - mongodb-server-svc
+      - authentication-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  nats-streaming-svc:
+    container_name: nats-streaming-svc
+    image: nats
+    volumes:
+      - certs_data:/certs
+    command: ['-m', '8222', '-js', '--tls', '--tlscert=/certs/localhost.crt', '--tlskey=/certs/localhost.key']    
+    expose:
+      - 4222
+      - 8222
+      - 6222
+    networks:
+      - nats
+    restart: always
+    labels:
+      org.label-schema.group: 'microservice'
+
+  # nats-streaming:
+  #   container_name: nats-streaming
+  #   image: nats-streaming:latest
+  #   expose:
+  #     - 4222
+  #     - 8222
+  #     - 6222
+  #   networks:
+  #     - nats
+  #   restart: always
+  #   command: [
+  #       '-p',
+  #       '4222',
+  #       '-m',
+  #       '8222',
+  #       '-hbi',
+  #       '5s',
+  #       '-hbt',
+  #       '5s',
+  #       '-hbf',
+  #       '2',
+  #       '-SD',
+  #       '-cid',
+  #       'microservice',
+  #   ]
+  #   labels:
+  #     org.label-schema.group: "microservice"
+
+  mailhog-smtp-svc:
+    container_name: mailhog-smtp-svc
+    image: mailhog/mailhog:latest
+    expose:
+      - 8025
+      - 1025
+    restart: unless-stopped
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  postgres-server-svc:
+    container_name: postgres-server-svc
+    image: postgres:13-alpine
+    expose:
+      - 5432
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    command: -p 5432
+    volumes:
+      - postgres_data_container:/var/lib/postgresql/data
+    networks:
+      - 'nats'
+    labels:
+      org.label-schema.group: 'microservice'
+
+  mongodb-server-svc:
+    container_name: mongodb-server-svc
+    image: mongo
+    expose:
+      - 27017
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
+    volumes:
+      - mongodb_data_container:/data/db
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  redis-server-svc:
+    container_name: redis-server-svc
+    image: redislabs/redisearch:latest
+    restart: unless-stopped
+    expose:
+      - 6379
+    volumes:
+      - redis_data:/data
+      - certs_data:/certs
+    # environment:
+    #   - REDIS_TLS_CERT_FILE=/certs/localhost.crt
+    #   - REDIS_TLS_KEY_FILE=/certs/localhost.key
+    #   - REDIS_TLS_CA_FILE=/certs/ca_localhost.crt
+    #   - REDIS_TLS_ENABLED=yes
+    #   - REDIS_TLS_PORT=6379
+    command:
+      [ 
+        'redis-server',
+        '--loadmodule',
+        '/usr/lib/redis/modules/redisearch.so',
+        '--appendonly',
+        'yes',
+        '--aof-use-rdb-preamble',
+        'yes'
+      ]
+    networks:
+      - nats
+    labels:
+      org.label-schema.group: 'microservice'
+
+  authentication-svc:
+    container_name: authentication-svc
+    image: joaosalazar/authentications
+    environment:
+      HASHPERMISSIONENDPOINT: ${HASHPERMISSIONENDPOINT}
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_EXPORTER_USER: ${MONGO_EXPORTER_USER}
+      MONGO_EXPORTER_PASSWORD: ${MONGO_EXPORTER_PASSWORD}
+      PROMETHEUS_PUSHGATEWAY: ${PROMETHEUS_PUSHGATEWAY}
+    expose:
+      - 5100
+    volumes:
+      - certs_data:/certs
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - nats-streaming-svc
+      - mailhog-smtp-svc
+      - mongodb-server-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  cart-svc:
+    container_name: cart-svc
+    image: joaosalazar/carts
+    environment:      
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_EXPORTER_USER: ${MONGO_EXPORTER_USER}
+      MONGO_EXPORTER_PASSWORD: ${MONGO_EXPORTER_PASSWORD}
+      PROMETHEUS_PUSHGATEWAY: ${PROMETHEUS_PUSHGATEWAY}
+    expose:
+      - 5500
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - nats-streaming-svc
+      - mailhog-smtp-svc
+      - mongodb-server-svc
+      - authentication-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  customer-svc:
+    container_name: customer-svc
+    image: joaosalazar/customers
+    environment:      
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_EXPORTER_USER: ${MONGO_EXPORTER_USER}
+      MONGO_EXPORTER_PASSWORD: ${MONGO_EXPORTER_PASSWORD}
+      PROMETHEUS_PUSHGATEWAY: ${PROMETHEUS_PUSHGATEWAY}
+    expose:
+      - 5300
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - nats-streaming-svc
+      - mailhog-smtp-svc
+      - mongodb-server-svc
+      - authentication-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  email-svc:
+    container_name: email-svc
+    image: joaosalazar/emails
+    environment:      
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+      SMTP_SERVER_USER: ${SMTP_SERVER_USER}
+      SMTP_SERVER_PASSWORD: ${SMTP_SERVER_PASSWORD}
+      PROMETHEUS_PUSHGATEWAY: ${PROMETHEUS_PUSHGATEWAY}
+    expose:
+      - 52000
+      - 53000
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - authentication-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  order-svc:
+    container_name: order-svc
+    image: joaosalazar/orders
+    environment:      
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_EXPORTER_USER: ${MONGO_EXPORTER_USER}
+      MONGO_EXPORTER_PASSWORD: ${MONGO_EXPORTER_PASSWORD}
+      PROMETHEUS_PUSHGATEWAY: ${PROMETHEUS_PUSHGATEWAY}
+    expose:
+      - 5600
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - nats-streaming-svc
+      - mailhog-smtp-svc
+      - mongodb-server-svc
+      - authentication-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  payment-svc:
+    container_name: payment-svc
+    image: joaosalazar/payments
+    environment:      
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_EXPORTER_USER: ${MONGO_EXPORTER_USER}
+      MONGO_EXPORTER_PASSWORD: ${MONGO_EXPORTER_PASSWORD}
+      PROMETHEUS_PUSHGATEWAY: ${PROMETHEUS_PUSHGATEWAY}
+    expose:
+      - 5700
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - nats-streaming-svc
+      - mailhog-smtp-svc
+      - mongodb-server-svc
+      - authentication-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  product-svc:
+    container_name: product-svc
+    image: joaosalazar/products
+    environment:      
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASSWORD: ${MONGO_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}      
+      MONGO_EXPORTER_USER: ${MONGO_EXPORTER_USER}
+      MONGO_EXPORTER_PASSWORD: ${MONGO_EXPORTER_PASSWORD}
+      PROMETHEUS_PUSHGATEWAY: ${PROMETHEUS_PUSHGATEWAY}
+    expose:
+      - 5400
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - nats-streaming-svc
+      - mailhog-smtp-svc
+      - postgres-server-svc
+      - mongodb-server-svc
+      - redis-server-svc
+      - authentication-svc
+    labels:
+      org.label-schema.group: 'microservice'
+
+  web-svc:
+    container_name: web-svc
+    image: joaosalazar/web
+    environment:      
+      PASSWORDPERMISSIONENDPOINT: ${PASSWORDPERMISSIONENDPOINT}
+    expose:
+      - 3000
+    restart: unless-stopped
+    networks:
+      - nats
+    depends_on:
+      - consul-svc
+      - authentication-svc
+      - product-svc
+    labels:
+      org.label-schema.group: 'microservice'

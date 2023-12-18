@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-dpl
+  namespace: mymicroservices
+  labels:
+    app: email-dpl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: email
+  template:
+    metadata:
+      name: email
+      labels:
+        app: email
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: email        
+        image: joaosalazar/emails
+        imagePullPolicy: Always
+        env:
+        - name: kubernetes
+          value: "true"
+        - name: PASSWORDPERMISSIONENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: certificate-permission-secret
+              key: PASSWORDPERMISSIONENDPOINT
+        - name: SMTP_SERVER_USER
+          valueFrom:
+            secretKeyRef:
+              name: mailhog-secret
+              key: SMTP_SERVER_USER
+        - name: SMTP_SERVER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mailhog-secret
+              key: SMTP_SERVER_PASSWORD
+        - name: PROMETHEUS_PUSHGATEWAY
+          valueFrom:
+            configMapKeyRef:
+              name: prometheus-pushgateway-map
+              key: PROMETHEUS_PUSHGATEWAY
+        ports:
+          - containerPort: 52000
+          - containerPort: 53000
+        resources:
+            requests:
+              cpu: "0.125"
+              memory: 30Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: email-svc
+  namespace: mymicroservices
+  labels:
+    app: email
+spec:
+  selector:
+    app: email
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: 52000
+      targetPort: 52000
+    - name: grpc
+      protocol: TCP
+      port: 53000
+      targetPort: 53000
+  type: ClusterIP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: email-alerts
+  namespace: observability
+  labels:
+    release: kube-prom-stack
+    role: server-rules
+spec:
+  groups:
+  - name: email.rules
+    rules:
+    - alert: email_down
+      expr: absent(container_memory_usage_bytes{container="email"})
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: Email down
+        description: Email container is down for more than 30 seconds.
+    - alert: email_high_cpu
+      expr: sum(rate(container_cpu_usage_seconds_total{container="email"}[1m])) / count(node_cpu_seconds_total{mode="system"}) * 100 > 10
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Email high CPU usage
+        description: Email CPU usage is {{ humanize $value}}%.
+    - alert: email_high_memory
+      expr: sum(container_memory_usage_bytes{container="email"}) > 1200000000
+      for: 30s
+      labels:
+        severity: warning
+      annotations:
+        summary: Email high memory usage
+        description: Email memory consumption is at {{ humanize $value}}.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: email-svc
+  namespace: observability
+  labels:
+    app: email
+    release: kube-prom-stack
+spec:  
+  selector:
+    matchLabels:
+      app: email      
+  endpoints:
+    - port: http-web
+      interval: 15s
+      path: /metrics
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+  namespaceSelector:                                                                                                                                                                                                                      
+    matchNames:                                                                                                                                                                                                                           
+    - mymicroservices

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-dpl
+  namespace: mymicroservices
+  labels:
+    app: web-dpl
+spec:
+  replicas: 1
+  # revisionHistoryLimit: 1
+  # strategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxSurge: 1
+  #     maxUnavailable: 0
+  # minReadySeconds: 10
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      name: web
+      labels:
+        app: web
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: web        
+        image: joaosalazar/web
+        imagePullPolicy: Always
+        env:
+        - name: KUBERNETES
+          value: "true"
+        - name: PASSWORDPERMISSIONENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: certificate-permission-secret
+              key: PASSWORDPERMISSIONENDPOINT
+        ports:
+          - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+  namespace: mymicroservices
+  labels:
+    app: web
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http-web
+      protocol: TCP
+      port: 3000
+      targetPort: 3000
+  type: ClusterIP
